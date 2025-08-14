@@ -40,12 +40,13 @@ class MedicalPatterns:
     # 基础清洗
     SPACE_CLEAN = re.compile(r'[\xa0\x7f\u3000\s]+')
     PUNCT_CLEAN = re.compile(r'\s*([。；，、？！])\s*')
-    
+    Correct_STOP=re.compile(r"([a-zA-Z\u4e00-\u9fa5])\.([a-zA-Z\u4e00-\u9fa5])",flags=re.I) 
     # 医学标识符转换
-    SPINE_C = re.compile(r'(?<![a-zA-Z])C([1-8])(?![0-9段])')
-    SPINE_T = re.compile(r'(?<![a-zA-Z])T(1[0-2]|[1-9])(?![0-9wW])')
-    SPINE_L = re.compile(r'(?<![a-zA-Z])L([1-5])(?![0-9])')
-    SPINE_S = re.compile(r'(?<![a-zA-Z])S([1-5])(?![0-9段])')
+    SPINE_C = re.compile(r'(^|[^a-zA-Z])C([1-8])(?!.*段)',flags=re.I) 
+    SPINE_T1 = re.compile(r'(^|[^a-zA-Z长短低高等脂水])T(\d{1,2})(?!.*[段_信号压黑为呈示a-zA-Z])',flags=re.I) 
+    SPINE_T2 = re.compile(r'(^|[^a-zA-Z])T(\d{1,2})椎',flags=re.I) 
+    SPINE_T3=re.compile(r'(^|[^a-zA-Z])T([3-9]|10|11|12)(?!.*[MN])',flags=re.I) 
+    SPINE_S = re.compile(r'(^|[^a-zA-Z])S([1-5])(?![段a-zA-Z0-9])',flags=re.I) 
     SPINE_WORDS=re.compile(r'椎|横突|棘|脊|黄韧带|肋|[^a-zA-Z]L[^a-zA-Z]|颈|骶|尾骨|骨(?!.*[信号|FLAIR])|腰大肌|腰[1-5]|胸[1-9]|隐裂|腰化|骶化|胸化|项韧带|纵韧带|腰骶')
     # 椎体范围扩展
     SPINE_RANGE = re.compile(r'([颈胸腰骶尾])(\d{1,2})[、,，及和](\d{1,2})(?!.*段)')
@@ -407,10 +408,11 @@ class MedicalPreprocessor:
         
         # 4. 脊柱标识符转换（扩展后再转换剩余的单独标识符）
         if self.patterns.SPINE_WORDS.search(sentence):
-            sentence = self.patterns.SPINE_C.sub(r'颈\1', sentence)
-            sentence = self.patterns.SPINE_T.sub(r'胸\1', sentence)
-            sentence = self.patterns.SPINE_L.sub(r'腰\1', sentence)
-            sentence = self.patterns.SPINE_S.sub(r'骶\1', sentence)
+            sentence = self.patterns.SPINE_C.sub('\\1颈\\2',sentence)
+            sentence = self.patterns.SPINE_T1.sub('\\1胸\\2',sentence)
+            sentence = self.patterns.SPINE_T2.sub('\\1胸\\2',sentence)
+            sentence = self.patterns.SPINE_S.sub('\\1骶\\2',sentence)
+        sentence = self.patterns.SPINE_T3.sub('\\1胸\\2',sentence)
         
         # 5. 一般替换
         for old, new in self.rules.simple_rules.items():
@@ -424,7 +426,7 @@ class MedicalPreprocessor:
         sentence = sentence.strip()
         sentence = re.sub(r'\s+', ' ', sentence)
         sentence = re.sub(r'[,，、]{2,}', '、', sentence)
-        
+        sentence=self.patterns.Correct_STOP.sub(r"\1。\2",sentence)
         return sentence
     
     def process(self, text: str) -> List[Dict[str, str]]:
