@@ -1,0 +1,34 @@
+[
+    {
+        "keyword": "腰3/4",
+        "axis": [
+            [
+                206.0,
+                207.0
+            ]
+        ],
+        "start": 7,
+        "end": 11,
+        "partlist": [
+            [
+                "脊柱",
+                "腰椎",
+                "腰椎间盘",
+                "腰3/4"
+            ]
+        ],
+        "position": "腰3/4",
+        "sentence_start": 0,
+        "long_sentence": "腰椎退行性变:腰3/4椎间盘膨出",
+        "short_sentence": "腰椎退行性变:腰3/4椎间盘膨出",
+        "original_sentence": "3.腰椎退行性变：腰3/4椎间盘膨出",
+        "sentence_index": 0,
+        "orientation": "",
+        "illness": "膨出",
+        "positive": true,
+        "measure": 0.0,
+        "percent": 0.0,
+        "volume": 0.0,
+        "original_short_sentence": "3.腰椎退行性变：腰3/4椎间盘膨出"
+    }
+]
