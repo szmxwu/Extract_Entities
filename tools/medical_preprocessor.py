@@ -11,8 +11,12 @@ from functools import lru_cache
 from pathlib import Path
 import json
 import time
-from .medical_expander import MedicalExpander
-from .text_utils import *
+if __name__ == "__main__":
+    from medical_expander import MedicalExpander
+    from text_utils import *
+else:
+    from .medical_expander import MedicalExpander
+    from .text_utils import *
 # ============ 配置和常量 ============
 
 BASE_DIR = Path(__file__).resolve().parent.parent

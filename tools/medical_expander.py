@@ -47,11 +47,11 @@ class MedicalExpander:
         self.rib_pattern = re.compile(
             r"(双侧|双|[左右]|)"   # Group 1: 可选前缀
             r"(第)"                # Group 2: '第'
-            r"([\d、，]+)"         # Group 3: 数字列表或范围起始
+            r"([\d、，,]+)"         # Group 3: 数字列表或范围起始
             r"(?:-(\d+))?"        # Group 4: 可选的范围结束
             r"([前后腋]?)"         # Group 5: 可选中缀
             r"(肋骨?)"             # Group 6: '肋骨' 或 '肋'
-            r"([^，。、\s]+)"      # Group 7: 后缀
+            r"([^，,。、\s]+)"      # Group 7: 后缀
         )
         
         # 句子分割模式
@@ -67,7 +67,7 @@ class MedicalExpander:
             r"[颈胸腰骶尾cCtTlLsS]\d{1,2}",  # 脊柱编号
             r"\d{1,2}/\d{1,2}",              # 椎间盘表示
             r"\d{1,2}-\d{1,2}",              # 范围表示
-            r"第\d+[、，-]",                  # 肋骨编号
+            r"第\d+[、，,-]",                  # 肋骨编号
             r"肋骨?",                        # 肋骨关键词
             self.SPINE_KEYWORDS               # 脊柱关键词
         ]
@@ -261,7 +261,7 @@ class MedicalExpander:
             else:
                 try:
                     numbers_to_expand = [
-                        int(n) for n in re.split(r'[、，]', num_part) 
+                        int(n) for n in re.split(r'[、，,]', num_part) 
                         if n.strip().isdigit()
                     ]
                 except ValueError:
@@ -275,7 +275,7 @@ class MedicalExpander:
                 for num in numbers_to_expand
             ]
             
-            return "，".join(expanded_parts)
+            return ",".join(expanded_parts)
         
         return self.rib_pattern.sub(replace_match, text)
     
@@ -336,8 +336,8 @@ if __name__ == "__main__":
     
     # 测试用例
     test_cases = [
-        "L1/2-L5/S1椎间盘突出",
-        "右第5、6前肋骨折，左第7、8后肋不全性骨折",
+        "第1-3肋骨骨折,左侧第5、6前肋不完全性骨折",
+        "第1-3肋骨骨折，左侧第5、6前肋不完全性骨折",
         "C1-C7椎体未见明显异常",
         "T3、4、5椎体压缩性骨折",
         "腰3-5椎体退行性改变"
