@@ -146,6 +146,9 @@ class EntityMerger:
         for entity in entities:
             entity['_merge'] = False
         
+        # 首先处理keyword包含关系
+        entities = self._merge_keyword_containment(entities)
+        
         if title_mode:
             # 标题模式：优先保留父节点
             merged = self._merge_title_mode(entities)
@@ -161,6 +164,52 @@ class EntityMerger:
             entity.pop('_merge', None)
         
         return result
+    
+    def _merge_keyword_containment(self, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        处理keyword包含关系：如果两个实体的keyword存在包含关系，保留较长的那个
+        
+        Args:
+            entities: 实体列表
+            
+        Returns:
+            处理后的实体列表
+        """
+        # 按start位置排序，便于处理
+        sorted_entities = sorted(entities, key=lambda x: x.get('start', 0))
+        
+        for i in range(len(sorted_entities)):
+            if sorted_entities[i]['_merge']:
+                continue
+                
+            entity_i = sorted_entities[i]
+            start_i = entity_i.get('start', 0)
+            end_i = entity_i.get('end', 0)
+            keyword_i = entity_i.get('keyword', '')
+            
+            for j in range(i + 1, len(sorted_entities)):
+                if sorted_entities[j]['_merge']:
+                    continue
+                    
+                entity_j = sorted_entities[j]
+                start_j = entity_j.get('start', 0)
+                end_j = entity_j.get('end', 0)
+                keyword_j = entity_j.get('keyword', '')
+                
+                # 检查是否存在包含关系
+                is_i_contains_j = start_i <= start_j and end_i >= end_j
+                is_j_contains_i = start_j <= start_i and end_j >= end_i
+                
+                if is_i_contains_j and not is_j_contains_i:
+                    # i包含j，保留i（较长），删除j
+                    sorted_entities[j]['_merge'] = True
+                elif is_j_contains_i and not is_i_contains_j:
+                    # j包含i，保留j（较长），删除i
+                    sorted_entities[i]['_merge'] = True
+                    break  # i已被标记删除，不需要继续比较
+                # 如果完全相等或者没有包含关系，则不处理
+                
+        return sorted_entities
     
     def _merge_report_mode(self, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -408,7 +457,49 @@ def merge_part(data_dict: List[Dict[str, Any]],
 if __name__ == "__main__":
     import json
     
-    # 测试数据（包含必要的字段）
+    # 测试包含关系的数据
+    test_containment = [
+        {
+            "keyword": "L5/S1",
+            "partlist": [["脊柱", "L5/S1"]],
+            "axis": [[106.0, 107.0]],
+            "position": "L5/S1",
+            "orientation": "",
+            "sentence_index": 0,
+            "sentence_start": 0,
+            "start": 0,
+            "end": 5,
+            "short_sentence": "L5/S1椎间盘突出",
+            "long_sentence": "L5/S1椎间盘突出",
+            "positive": False
+        },
+        {
+            "keyword": "L5",
+            "partlist": [["脊柱", "L5"]],
+            "axis": [[106.0, 107.0]],
+            "position": "L5",
+            "orientation": "",
+            "sentence_index": 0,
+            "sentence_start": 0,
+            "start": 0,
+            "end": 2,
+            "short_sentence": "L5/S1椎间盘突出",
+            "long_sentence": "L5/S1椎间盘突出",
+            "positive": False
+        }
+    ]
+    
+    print("=== 测试keyword包含关系处理 ===")
+    merger = EntityMerger()
+    result_containment = merger.merge_entities(test_containment, False)
+    
+    print("包含关系测试 - 合并前实体数量:", len(test_containment))
+    print("包含关系测试 - 合并后实体数量:", len(result_containment))
+    print("\n包含关系测试 - 合并后的实体:")
+    for entity in result_containment:
+        print(f"  - {entity['keyword']} (start:{entity['start']}, end:{entity['end']})")
+    
+    # 原有测试数据（包含必要的字段）
     test_entities = [
         {
             "keyword": "肝脏",
@@ -454,8 +545,8 @@ if __name__ == "__main__":
         }
     ]
     
+    print("\n=== 原有功能测试 ===")
     # 执行合并
-    merger = EntityMerger()
     result = merger.merge_entities(test_entities, False)
     
     # 打印结果

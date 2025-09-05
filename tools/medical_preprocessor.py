@@ -50,6 +50,7 @@ class MedicalPatterns:
     SPINE_T1 = re.compile(r'(^|[^a-zA-Z长短低高等脂水])T(\d{1,2})(?!.*[段_信号压黑为呈示a-zA-Z])',flags=re.I) 
     SPINE_T2 = re.compile(r'(^|[^a-zA-Z])T(\d{1,2})椎',flags=re.I) 
     SPINE_T3=re.compile(r'(^|[^a-zA-Z])T([3-9]|10|11|12)(?!.*[MN])',flags=re.I) 
+    SPINE_L = re.compile(r'(^|[^a-zA-Z])L([1-5])(?![段a-zA-Z0-9])',flags=re.I) 
     SPINE_S = re.compile(r'(^|[^a-zA-Z])S([1-5])(?![段a-zA-Z0-9])',flags=re.I) 
     SPINE_WORDS=re.compile(r'椎|横突|棘|脊|黄韧带|肋|[^a-zA-Z]L[^a-zA-Z]|颈|骶|尾骨|骨(?!.*[信号|FLAIR])|腰大肌|腰[1-5]|胸[1-9]|隐裂|腰化|骶化|胸化|项韧带|纵韧带|腰骶')
     # 椎体范围扩展
@@ -415,6 +416,7 @@ class MedicalPreprocessor:
             sentence = self.patterns.SPINE_C.sub('\\1颈\\2',sentence)
             sentence = self.patterns.SPINE_T1.sub('\\1胸\\2',sentence)
             sentence = self.patterns.SPINE_T2.sub('\\1胸\\2',sentence)
+            sentence= self.patterns.SPINE_L.sub('\\1腰\\2',sentence)
             sentence = self.patterns.SPINE_S.sub('\\1骶\\2',sentence)
         sentence = self.patterns.SPINE_T3.sub('\\1胸\\2',sentence)
         
@@ -643,11 +645,11 @@ def test():
 # ============ 测试代码 ============
 
 if __name__ == "__main__":
-    test_text="L1/2-L5/S1椎间盘突出"
+    test_text="L5/S1椎间盘膨出"
     results = preprocess_text(test_text, version='报告')
     for i, item in enumerate(results, 1):
         print(f"句子{i}:")
         print(f"  原始: {item['original'][:50]}...")
         print(f"  处理后: {item['preprocessed'][:50]}...")
-    test()
+    # test()
 

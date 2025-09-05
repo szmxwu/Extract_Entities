@@ -27,9 +27,24 @@ tipwords = conf.get("sentence", "tipwords")
 deny_words = conf.get("positive", "deny_words")
 stop_pattern = conf.get("sentence", "stop_pattern")
 Ignore_sentence = conf.get("clean", "Ignore_sentence")
-
+miss_ignore=conf.get("report_conclusion", "miss_ignore")
+miss_ignore_pattern = re.compile(miss_ignore, flags=re.I)
 STRONG_DEPENDENCY_KEYWORDS=conf.get("sentence", "STRONG_DEPENDENCY_KEYWORDS").split('|')
 BOILERPLATE_KEYWORDS=conf.get("sentence", "BOILERPLATE_KEYWORDS")
+aspect_patterns={}
+aspect_patterns["shape"]=re.compile(rf'{conf.get("contradiction", "aspect1")}')
+aspect_patterns["position"]=re.compile(rf'{conf.get("contradiction", "aspect2")}')
+aspect_patterns["size"]=re.compile(rf'{conf.get("contradiction", "aspect3")}')
+aspect_patterns["enhancement"]=re.compile(rf'{conf.get("contradiction", "aspect4")}')
+aspect_patterns["fluid"]=re.compile(rf'{conf.get("contradiction", "aspect5")}')
+aspect_patterns["gas"]=re.compile(rf'{conf.get("contradiction", "aspect6")}')
+aspect_patterns["wall_change"]=re.compile(rf'{conf.get("contradiction", "aspect7")}')
+aspect_patterns["lesion_density"]=re.compile(rf'{conf.get("contradiction", "aspect8")}')
+aspect_patterns["organ_density"]=re.compile(rf'{conf.get("contradiction", "aspect9")}')
+aspect_patterns["lymph_node"]=re.compile(rf'{conf.get("contradiction", "aspect10")}')
+aspect_patterns["foreign_body"]=re.compile(rf'{conf.get("contradiction", "aspect11")}')
+
+exclud = conf.get("contradiction", "exclud")
 #读取知识图谱
 report_kg_df = pd.read_excel(BASE_DIR / 'config' / 'knowledgegraph.xlsx')
 title_kg_df = pd.read_excel(BASE_DIR / 'config' / 'knowledgegraph_title.xlsx')
@@ -62,6 +77,9 @@ NormKey_pattern = re.compile(NormKeyWords, flags=re.I)
 
 illness_words = conf.get("positive", "illness_words")
 illness_pattern = re.compile(illness_words, flags=re.I)
+
+PhysiologicWords= conf.get("positive", "PhysiologicWords")
+PhysiologicWords_pattern = re.compile(PhysiologicWords, flags=re.I)
 
 sole_words = conf.get("positive", "sole_words")
 sole_words_set = set(sole_words.split("|"))
@@ -101,7 +119,7 @@ class Report(BaseModel):
     Sex:性别<br>
     applyTable:申请单，由既往史、临床症状、主诉、现病史拼合<br>
     """
-
+    Accession_number: str= Field(title="申请单号",examples=["M0002093420"],default="")
     ConclusionStr: str= Field(title="报告结论",examples= ["""
     1.左乳术后改变，双肺及胸膜多发结节，部分较前饱满、稍大；肝内多发低密度影较前增多、范围增大；右侧心膈角稍大淋巴结。结合病史均考虑转移瘤可能性大。
     2.右肺少许炎症，右侧胸膜增厚，较前进展。右侧少量胸腔积液较前稍多。双肺少许慢性炎症同前。主动脉及冠脉硬化，心包积液大致同前。
@@ -127,8 +145,7 @@ class Report(BaseModel):
 def build_unified_processor(kg_dataframe: pd.DataFrame):
     """
     从完整的Excel知识图谱DataFrame构建一个统一的、信息丰富的Flashtext抽取器。
-    【修正版】: 此版本正确区分了"层级关系"和"词义歧义"，确保父节点被正确识别，
-    且只有末端实体（leaf node）才会被视为潜在的歧义词。
+
 
     Args:
         kg_dataframe: 从Excel文件读取的完整知识图谱DataFrame。
@@ -378,11 +395,41 @@ def process_positive_batch(items: List[Dict]) -> List[Dict]:
     """
     for item in items:
         positive, measure, percent, volume = get_positive(item)
-        item['positive'] = positive
+        if positive:
+            if miss_ignore_pattern.search(item['short_sentence']):
+                item['positive']=2
+            else:
+                item['positive']=3
+        else:
+            if PhysiologicWords_pattern.search(item['short_sentence']):
+                item['positive'] = 1
+            else:
+                item['positive'] = 0
         item['measure'] = measure
         item['percent'] = percent
         item['volume'] = volume
     
+    return items
+
+def get_pathology_attribute(items: List[Dict]) -> List[Dict]:
+    """
+    批量处理所有实体的病理属性提取
+    
+    Args:
+        items: 实体列表
+    
+    Returns:
+        更新后的实体列表
+    """
+    for item in items:
+        attribute=[]
+        for key,pattern in aspect_patterns.items():
+            mat=pattern.search(item['illness'])
+            if mat:
+                attribute.append(key)
+        if not attribute:
+            attribute=["other_description"]
+        item['attribute']=attribute
     return items
 
 def match_short_sentence_batch(items: List[Dict]) -> List[Dict]:
@@ -546,6 +593,33 @@ def resplit_sentence_by_entities(
 def text_extrac_process(report_text,version='报告', modality='CT',add_info=None):
     """
     处理报告文本，提取关键词并进行实体锚定和句子拆分。
+    输入：需的参数：
+        report_text：报告文本
+        version：报告或标题（对应检查部位)
+        modality：报告类型
+        add_info：附加来自标题的信息
+    返回：
+        一个包含所有锚点信息的字典列表，每个锚点包含以下字段：
+        original_sentence：按照硬分割（。；！？!?/n/r）切割的粗糙长句
+        sentence_index：original_sentence在原始段落中的序号
+        long_sentence：original_sentence被预处理后的结果，包括语义
+    输出：
+        original_sentence：按照硬分割（。；！？!?/n/r）切割的粗糙长句
+        sentence_index：original_sentence在原始段落中的序号
+        long_sentence：original_sentence被预处理后的结果，包括语义扩展、缩写替换、以及各种有利于关键词抽取的预处理。
+        short_sentence：根据实体位置和软分割（,，）生成的虚拟短句
+        original_short_sentence：original_sentence中和short_sentence对应的短句，即没有经过预处理的short_sentence
+        sentence_start：short_sentence在long_sentence中的起始位置
+        keyword：short_sentence中的解剖实体关键词
+        position：被标准化之后的keyword
+        start：keyword在short_sentence中的起始位置
+        end：keyword在short_sentence中的结束位置
+        partlist：keyword映射到知识图谱中的实体关系链,为最大六级父子关系的节点，如果经过规则消歧后仍存在歧义，partlist会包含多种可能的LIST
+        axis：keyword在知识图谱中的人体坐标位置，基于先验知识确定，用于规则消歧
+        orientation：position的方位属性（左/右），根据文本分析+上下文分析推理而来
+        illness：根据句法分析规则获得的病理实体，从short_sentence中截取而来
+        positive：illness的阴性/阳性/中性属性，即是否存在疾病
+        measure，percent，volume：从short_sentence中抽取的数值属性，分别代表长度，百分比，体积
     """
 
     processed_text=preprocess_text(report_text, version, modality=None) # 预处理文本，返回预处理后的句子列表
@@ -566,6 +640,7 @@ def text_extrac_process(report_text,version='报告', modality='CT',add_info=Non
     result = disambiguate_entities(result, add_info)    #歧义消解
     result = merge_part(result, True if version=="标题" else False) # 合并部位信息
     result=match_short_sentence_batch(result) #匹配原始短句
+    result=get_pathology_attribute(result) #获取病理属性
     return result
 
 def filter_paragraphs(report_text: str) -> str :
@@ -589,10 +664,23 @@ def report_extrac_process(ReportTxt: Report):
     将报告的描述与结论字段的自然语言转换为结构化字段
 
     输出：
-    partlist：六级部位列表；position：标准化部位名称；keyword：原始部位名称；
-    illness：疾病描述；positive：阳性/阴性 ；measure：轴向测量值；percent：百分比值；
-    short_sentence：独立意义短句,long_sentence：预处理后的长句；original_sentence：原始长句；
-    sentence_index：长句在报告中的索引；sentence_start：短句在长句中的起始位置；start：关键词在短句中的起始位置；end：关键词在短句中的结束位置
+        original_sentence：按照硬分割（。；！？!?/n/r）切割的粗糙长句
+        sentence_index：original_sentence在原始段落中的序号
+        long_sentence：original_sentence被预处理后的结果，包括语义扩展、缩写替换、以及各种有利于关键词抽取的预处理。
+        short_sentence：根据实体位置和软分割（,，）生成的虚拟短句
+        original_short_sentence：original_sentence中和short_sentence对应的短句，即没有经过预处理的short_sentence
+        sentence_start：short_sentence在long_sentence中的起始位置
+        keyword：short_sentence中的解剖实体关键词
+        position：被标准化之后的keyword
+        start：keyword在short_sentence中的起始位置
+        end：keyword在short_sentence中的结束位置
+        partlist：keyword映射到知识图谱中的实体关系链,为最大六级父子关系的节点，如果经过规则消歧后仍存在歧义，partlist会包含多种可能的LIST
+        axis：keyword在知识图谱中的人体坐标位置，基于先验知识确定，用于规则消歧
+        orientation：position的方位属性（左/右），根据文本分析+上下文分析推理而来
+        illness：根据句法分析规则获得的病理实体，从short_sentence中截取而来
+        positive：illness的阴性/阳性属性，即是否存在疾病
+        measure，percent，volume：从short_sentence中抽取的数值属性，分别代表长度，百分比，体积
+        Field：实体来源于描述还是结论字段
     """
     studypart_analyze = text_extrac_process(ReportTxt.StudyPart, version="标题",modality=ReportTxt.modality) if ReportTxt.StudyPart else []
     result=[]
@@ -604,6 +692,7 @@ def report_extrac_process(ReportTxt: Report):
         Report_analyze=[{**dic, 'Field': 'description'} for dic in Report_analyze]
     if len(Conclusion_analyze)>0:
         Conclusion_analyze=[{**dic, 'Field': 'Conclusion'} for dic in Conclusion_analyze]
+
     result.extend(Report_analyze)
     result.extend(Conclusion_analyze)
     return result
@@ -613,7 +702,7 @@ def simple_example():
     # 示例1：包含强依存关系（应合并）和并列关系（应切分）的复杂长句
     long_sentence_1 = "肝门区可见肿块，压迫胆总管上段，胆囊未见增大，脂肪肝，请结合临床。双肺未见异常密度，支气管通畅。心脏增大，心腔密度减低，主动脉钙化。建议复查。胸廓入口水平见食道软组织结节。"
     long_sentence_1 = """
-左侧基底节及侧脑室边缘旁见斑片状长T1长T2信号影
+L1/2-4/5椎间盘向后方突出，L5/S1椎间盘膨出，后方硬脊膜囊受压，双侧隐窝稍狭窄，相应椎管无狭窄
     """
 
     startTime = time.time()

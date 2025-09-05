@@ -17,11 +17,11 @@ conf.read(config_path,encoding='utf-8')
 def simple_example():
     # 示例1：包含强依存关系（应合并）和并列关系（应切分）的复杂长句
     long_sentence_1 = "肝门区可见肿块，压迫胆总管上段，胆囊未见增大，脂肪肝，请结合临床。双肺未见异常密度，支气管通畅。心脏增大，心腔密度减低，主动脉钙化。建议复查。胸廓入口水平见食道软组织结节。"
-    long_sentence_1 = """
-3.腰椎退行性变：腰3/4椎间盘膨出
+#     long_sentence_1 = """
+# 腰椎退行性变,L1/2-3/4椎间盘膨出。肝门附近肝内胆管扩张。
 
 
-    """
+#     """
 
     startTime = time.time()
     result = text_extrac_process(long_sentence_1)
@@ -126,7 +126,7 @@ def process_corpus_excel_files(corpus_dir='corpus', num_processes=12):
 if __name__ == '__main__':
     # simple_example()
     result_df=process_corpus_excel_files()
-    # 将结果保存到Excel文件
+    # # 将结果保存到Excel文件
     output_file = BASE_DIR / 'processed_copus' / 'processed_report_data'
     (result_df[:int(len(result_df)/2)]).to_excel(str(output_file) + "1.xlsx", index=False)
     (result_df[int(len(result_df)/2):]).to_excel(str(output_file) + "2.xlsx", index=False)

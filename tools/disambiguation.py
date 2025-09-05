@@ -290,6 +290,7 @@ class AmbiguityResolver:
         Returns:
             上下文实体列表
         """
+        all_entities=[x for x in all_entities if len(x['partlist'])==1]
         before = all_entities[:current_index][::-1]  # 反转，从近到远
         after = all_entities[current_index + 1:]
         
