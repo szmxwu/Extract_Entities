@@ -68,13 +68,13 @@ class AmbiguityResolver:
         self._single_ambiguity_cache = {}
     
     def resolve_entities(self, entities_list: List[Dict[str, Any]], 
-                        add_info: Optional[List[Tuple[float, float]]] = None) -> List[Dict[str, Any]]:
+                        add_info: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
         """
         对实体列表进行歧义消解
         
         Args:
             entities_list: 实体列表，包含可能有歧义的实体
-            add_info: 检查部位的axis信息列表
+            add_info: 检查部位的信息列表
         
         Returns:
             消歧后的实体列表，保持原有数据结构
@@ -88,12 +88,13 @@ class AmbiguityResolver:
             # 检查是否存在歧义（partlist或axis有多个元素）
             if isinstance(entity.get('partlist', []), list) and \
                len(entity.get('partlist', [])) > 1 and \
-               isinstance(entity['partlist'][0], tuple):
+               isinstance(entity['partlist'][0], (tuple, list)):
                 # 存在歧义，进行消解
                 resolved = self._resolve_single_ambiguity(entity, entities_list, i, add_info)
                 result.append(resolved)
             else:
-                # 无歧义或已经是单一候选，直接添加
+                # 无歧义或已经是单一候选，设置anchor为空
+                entity['anchor'] = ''
                 result.append(entity)
         
         return result
@@ -114,7 +115,7 @@ class AmbiguityResolver:
     def _resolve_single_ambiguity(self, ambiguous_entity: Dict[str, Any],
                                  all_entities: List[Dict[str, Any]],
                                  current_index: int,
-                                 add_info: Optional[List[Tuple[float, float]]]) -> Dict[str, Any]:
+                                 add_info: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
         """
         消解单个歧义实体（带缓存）
         
@@ -151,62 +152,78 @@ class AmbiguityResolver:
             add_info: 检查部位信息
         
         Returns:
-            消歧后的实体
+            消歧后的实体（包含anchor字段）
         """
         # 准备候选列表
         candidates = self._prepare_candidates(ambiguous_entity)
+        anchor_entity = None  # 用于记录锚定实体
         
         if len(candidates) == 1:
-            return self._merge_candidate_to_entity(ambiguous_entity, candidates[0])
+            return self._merge_candidate_to_entity(ambiguous_entity, candidates[0], '')
         
         # 策略1：先验知识过滤
         filtered = self._apply_prior_knowledge(candidates, ambiguous_entity.get('short_sentence', ''))
         if filtered and len(filtered) < len(candidates):
             candidates = filtered
             if len(candidates) == 1:
-                return self._merge_candidate_to_entity(ambiguous_entity, candidates[0])
+                return self._merge_candidate_to_entity(ambiguous_entity, candidates[0], '先验知识')
         
         # 策略2：检查部位匹配
         if add_info:
-            filtered = self._match_exam_part(candidates, add_info)
-            if filtered and len(filtered) < len(candidates):
-                # 特殊处理：排除明显不相关的部位
-                if "脊柱" not in [c['partlist'][0] for c in filtered] and \
-                   "皮肤软组织" not in [c['position'] for c in filtered]:
-                    candidates = filtered
-                    if len(candidates) == 1:
-                        return self._merge_candidate_to_entity(ambiguous_entity, candidates[0])
+            filtered, anchor_keyword = self._match_exam_part(candidates, add_info)
+            if filtered :
+                # 根据规则2：判断是否直接返回结果
+                has_limb = any("上肢" in c['partlist'][0] or "下肢" in c['partlist'][0] 
+                              for c in filtered if len(c['partlist']) > 0)
+                has_spine = any("脊柱" in c['partlist'] for c in filtered)
+                has_skin = any("皮肤软组织" == c['position'] for c in filtered)
+                
+                # 满足以下条件时直接返回，不再进行后续消歧
+                if (len(filtered) < len(candidates) or has_limb) and not has_spine and not has_skin:
+                    return self._merge_candidate_to_entity(ambiguous_entity, filtered[0], anchor_keyword or '')
+                
+                # 否则更新candidates继续后续处理
+                candidates = filtered
+                if not anchor_entity:
+                    anchor_entity = anchor_keyword
+                if len(candidates) == 1:
+                    return self._merge_candidate_to_entity(ambiguous_entity, candidates[0], anchor_entity or '')
         
         # 策略3：上下文partlist匹配
         if context_entities:
-            matched = self._match_context_partlist(candidates, context_entities)
+            matched, anchor_keyword = self._match_context_partlist(candidates, context_entities)
             if matched and len(matched) < len(candidates):
                 candidates = matched
+                anchor_entity = anchor_keyword
                 if len(candidates) == 1:
-                    return self._merge_candidate_to_entity(ambiguous_entity, candidates[0])
+                    return self._merge_candidate_to_entity(ambiguous_entity, candidates[0], anchor_entity or '')
         
         # 策略4：上下文axis匹配
         if context_entities:
-            matched = self._match_context_axis(candidates, context_entities)
+            matched, anchor_keyword = self._match_context_axis(candidates, context_entities)
             if matched and len(matched) < len(candidates):
                 candidates = matched
+                if not anchor_entity:  # 如果之前没有找到锚定实体
+                    anchor_entity = anchor_keyword
                 if len(candidates) == 1:
-                    return self._merge_candidate_to_entity(ambiguous_entity, candidates[0])
+                    return self._merge_candidate_to_entity(ambiguous_entity, candidates[0], anchor_entity or '')
         
         # 策略5：扩展坐标匹配
-        matched = self._match_extended_axis(candidates, context_entities, add_info)
+        matched, anchor_keyword = self._match_extended_axis(candidates, context_entities, add_info)
         if matched and len(matched) < len(candidates):
             candidates = matched
+            if not anchor_entity:  # 如果之前没有找到锚定实体
+                anchor_entity = anchor_keyword
             if len(candidates) == 1:
-                return self._merge_candidate_to_entity(ambiguous_entity, candidates[0])
+                return self._merge_candidate_to_entity(ambiguous_entity, candidates[0], anchor_entity or '')
         
         # 策略6：兜底策略
         final_candidates = self._apply_fallback_strategy(candidates)
         if len(final_candidates) == 1:
-            return self._merge_candidate_to_entity(ambiguous_entity, final_candidates[0])
+            return self._merge_candidate_to_entity(ambiguous_entity, final_candidates[0], anchor_entity or '')
         else:
-            # 如果仍有多个候选，保留所有
-            return self._merge_multiple_candidates_to_entity(ambiguous_entity, final_candidates)
+            # 如果仍有多个候选，保留所有，但保持找到的anchor信息
+            return self._merge_multiple_candidates_to_entity(ambiguous_entity, final_candidates, anchor_entity or '')
     
     def _prepare_candidates(self, ambiguous_entity: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -235,13 +252,15 @@ class AmbiguityResolver:
         return candidates
     
     def _merge_candidate_to_entity(self, original_entity: Dict[str, Any],
-                                  candidate: Dict[str, Any]) -> Dict[str, Any]:
+                                  candidate: Dict[str, Any], 
+                                  anchor: str = '') -> Dict[str, Any]:
         """
         将选中的单个候选合并回原实体
         
         Args:
             original_entity: 原始实体
             candidate: 选中的单个候选
+            anchor: 锚定实体的关键词
         
         Returns:
             更新后的实体（partlist和axis仍为嵌套列表格式，但只有一个元素）
@@ -252,17 +271,19 @@ class AmbiguityResolver:
         result['partlist'] = [candidate['partlist']]
         result['axis'] = [candidate['axis']]
         result['position'] = candidate['position']
-        
+        result['anchor'] = anchor
         return result
     
     def _merge_multiple_candidates_to_entity(self, original_entity: Dict[str, Any],
-                                            candidates: List[Dict[str, Any]]) -> Dict[str, Any]:
+                                            candidates: List[Dict[str, Any]], 
+                                            anchor: str = '') -> Dict[str, Any]:
         """
         将多个候选合并回原实体（保留多个候选）
         
         Args:
             original_entity: 原始实体
             candidates: 选中的候选列表
+            anchor: 锚定实体的关键词
         
         Returns:
             更新后的实体
@@ -276,6 +297,7 @@ class AmbiguityResolver:
             # position取第一个候选的
             result['position'] = candidates[0]['position']
         
+        result['anchor'] = anchor
         return result
     
     def _build_context_list(self, all_entities: List[Dict[str, Any]], 
@@ -290,12 +312,34 @@ class AmbiguityResolver:
         Returns:
             上下文实体列表
         """
-        all_entities=[x for x in all_entities if len(x['partlist'])==1]
-        before = all_entities[:current_index][::-1]  # 反转，从近到远
-        after = all_entities[current_index + 1:]
+        # 先过滤出无歧义的实体
+        filtered_entities = []
+        original_to_filtered_index = {}  # 原索引到过滤后索引的映射
+        
+        for i, entity in enumerate(all_entities):
+            partlist = entity.get('partlist', [])
+            if isinstance(partlist, list) and len(partlist) == 1 :
+                original_to_filtered_index[i] = len(filtered_entities)
+                filtered_entities.append(entity)
+        
+        # 如果无歧义实体数量为1，直接返回该实体
+        if len(filtered_entities) == 1:
+            return filtered_entities
+        
+        # 如果当前实体不在无歧义列表中，直接返回所有无歧义实体
+        if current_index not in original_to_filtered_index:
+            return filtered_entities
+        
+        # 获取当前实体在过滤后列表中的索引
+        filtered_current_index = original_to_filtered_index[current_index]
+        
+        # 构建前后文列表（排除当前实体）
+        before = filtered_entities[:filtered_current_index][::-1]  # 反转，从近到远
+        after = filtered_entities[filtered_current_index + 1:]
         
         # 交替合并前后文
         context = []
+        from itertools import zip_longest
         for b, a in zip_longest(before, after):
             if b is not None:
                 context.append(b)
@@ -336,6 +380,7 @@ class AmbiguityResolver:
                                     sentence_text: str) -> List[Dict[str, Any]]:
         """
         先验知识过滤的实际逻辑
+        注意：根据原始设计，这里只处理脊柱相关的先验知识
         
         Args:
             candidates: 候选列表
@@ -344,67 +389,49 @@ class AmbiguityResolver:
         Returns:
             过滤后的候选列表
         """
-        # 脊柱相关
+        # 脊柱相关 - 只排除女性附件，不做其他过滤
         if re.search(self.spine_words, sentence_text):
-            # 过滤出脊柱相关候选，同时排除女性附件
+            # 仅排除女性附件相关候选
             filtered = [c for c in candidates 
-                       if ("脊柱" in c['partlist'][0] or 
-                           "椎" in "".join(c['partlist']) or
-                           "脊" in "".join(c['partlist'])) and
-                          "女性附件" not in c['partlist']]
-            if filtered:
-                return filtered
-        
-        # 皮肤软组织相关
-        if "皮肤" in sentence_text or "软组织" in sentence_text:
-            filtered = [c for c in candidates 
-                       if "皮肤软组织" in "".join(c['partlist'])]
-            if filtered:
-                return filtered
-        
-        # 四肢相关
-        if "上肢" in sentence_text or "下肢" in sentence_text:
-            filtered = [c for c in candidates 
-                       if len(c['partlist']) > 0 and 
-                       ("上肢" in c['partlist'][0] or "下肢" in c['partlist'][0])]
-            if filtered:
+                       if "女性附件" not in c['partlist']]
+            if filtered and len(filtered) < len(candidates):
                 return filtered
         
         return candidates
     
     def _match_exam_part(self, candidates: List[Dict[str, Any]], 
-                        add_info: List[Tuple[float, float]]) -> List[Dict[str, Any]]:
+                        add_info: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         """
         根据检查部位信息过滤
         
         Args:
             candidates: 候选列表
-            add_info: 检查部位axis信息
+            add_info: 检查部位信息
         
         Returns:
-            匹配的候选列表
+            (匹配的候选列表, 锚定实体的keyword)
         """
         matched = []
+        anchor_keyword = None
+        
         for candidate in candidates:
-            for exam_axis in add_info:
-                if self._interval_cross(candidate['axis'], exam_axis):
+            for exam_info in add_info:
+                # 处理不同的数据格式
+                exam_axis = None
+                if 'axis' in exam_info and isinstance(exam_info['axis'], list) and len(exam_info['axis']) > 0:
+                    if isinstance(exam_info['axis'][0], (list, tuple)) and len(exam_info['axis'][0]) >= 2:
+                        exam_axis = exam_info['axis'][0]
+                
+                if exam_axis and self._interval_cross(candidate['axis'], exam_axis):
                     matched.append(candidate)
+                    if not anchor_keyword:  # 只记录第一个匹配的锚定实体
+                        anchor_keyword = exam_info.get('keyword', '')
                     break
         
-        # 特殊处理：如果有匹配且数量减少，进一步过滤
-        if matched and len(matched) < len(candidates):
-            # 排除上肢、下肢等明显不相关的部位
-            non_limb = [m for m in matched 
-                       if len(m['partlist']) > 0 and
-                       "上肢" not in m['partlist'][0] and 
-                       "下肢" not in m['partlist'][0]]
-            if non_limb:
-                return non_limb
-        
-        return matched if matched else candidates
+        return (matched if matched else candidates, anchor_keyword)
     
     def _match_context_partlist(self, candidates: List[Dict[str, Any]],
-                               context_entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                               context_entities: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         """
         基于上下文实体的partlist进行匹配
         
@@ -413,32 +440,43 @@ class AmbiguityResolver:
             context_entities: 上下文实体列表
         
         Returns:
-            最佳匹配的候选列表
+            (最佳匹配的候选列表, 锚定实体的keyword)
         """
         best_matches = []
         max_score = 0
+        anchor_keyword = None
         
-        for candidate in candidates:
-            for context in context_entities:
-                # 获取context的partlist（可能是嵌套的）
-                context_partlist = self._get_first_partlist(context)
-                if not context_partlist:
-                    continue
-                
+        for context in context_entities:
+            # 规则3：如果相邻实体句子包含脊柱词，先过滤候选集
+            context_sentence = context.get('short_sentence', '')
+            temp_candidates = candidates
+            if re.search(self.spine_words, context_sentence):
+                temp_candidates = [c for c in candidates if "女性附件" not in c['partlist']]
+                if not temp_candidates:
+                    temp_candidates = candidates
+            
+            # 获取context的partlist（可能是嵌套的）
+            context_partlist = self._get_first_partlist(context)
+            if not context_partlist:
+                continue
+            
+            # 在过滤后的候选集中找最佳匹配
+            for candidate in temp_candidates:
                 # 计算共同元素数量
                 common_count = len(set(candidate['partlist']) & set(context_partlist))
                 
                 if common_count > max_score:
                     max_score = common_count
                     best_matches = [candidate]
-                elif common_count == max_score and common_count > 0:
-                    if candidate not in best_matches:
-                        best_matches.append(candidate)
+                    anchor_keyword = context.get('keyword', '')
+                # elif common_count == max_score and common_count > 0:
+                #     if candidate not in best_matches:
+                #         best_matches.append(candidate)
         
-        return best_matches if best_matches else candidates
+        return (best_matches if best_matches else candidates, anchor_keyword)
     
     def _match_context_axis(self, candidates: List[Dict[str, Any]],
-                           context_entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                           context_entities: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         """
         基于上下文实体的坐标进行匹配
         
@@ -447,21 +485,35 @@ class AmbiguityResolver:
             context_entities: 上下文实体列表
         
         Returns:
-            匹配的候选列表
+            (匹配的候选列表, 锚定实体的keyword)
         """
         matched = []
-        for candidate in candidates:
-            for context in context_entities:
-                context_axis = self._get_first_axis(context)
-                if context_axis and self._interval_cross(candidate['axis'], context_axis):
-                    matched.append(candidate)
-                    break
+        anchor_keyword = None
         
-        return matched if matched else candidates
+        for context in context_entities:
+            # 规则3：如果相邻实体句子包含脊柱词，先过滤候选集
+            context_sentence = context.get('short_sentence', '')
+            temp_candidates = candidates
+            if re.search(self.spine_words, context_sentence):
+                temp_candidates = [c for c in candidates if "女性附件" not in c['partlist']]
+                if not temp_candidates:
+                    temp_candidates = candidates
+            
+            # 在过滤后的候选集中进行坐标匹配
+            context_axis = self._get_first_axis(context)
+            if context_axis:
+                for candidate in temp_candidates:
+                    if self._interval_cross(candidate['axis'], context_axis):
+                        if candidate not in matched:
+                            matched.append(candidate)
+                        if not anchor_keyword:  # 只记录第一个匹配的锚定实体
+                            anchor_keyword = context.get('keyword', '')
+        
+        return (matched if matched else candidates, anchor_keyword)
     
     def _match_extended_axis(self, candidates: List[Dict[str, Any]],
                             context_entities: List[Dict[str, Any]],
-                            add_info: Optional[List[Tuple[float, float]]]) -> List[Dict[str, Any]]:
+                            add_info: Optional[List[Tuple[float, float]]]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         """
         使用扩展坐标范围进行匹配
         
@@ -471,9 +523,10 @@ class AmbiguityResolver:
             add_info: 检查部位信息
         
         Returns:
-            匹配的候选列表
+            (匹配的候选列表, 锚定实体的keyword)
         """
         matched = []
+        anchor_keyword = None
         
         # 先尝试与上下文匹配
         for candidate in candidates:
@@ -481,17 +534,19 @@ class AmbiguityResolver:
                 context_axis = self._get_first_axis(context)
                 if context_axis and self._interval_cross(candidate['axis'], context_axis, extend=True):
                     matched.append(candidate)
+                    if not anchor_keyword:  # 只记录第一个匹配的锚定实体
+                        anchor_keyword = context.get('keyword', '')
                     break
         
         # 如果没有匹配，尝试与检查部位匹配
         if not matched and add_info:
             for candidate in candidates:
                 for exam_axis in add_info:
-                    if self._interval_cross(candidate['axis'], exam_axis, extend=True):
+                    if self._interval_cross(candidate['axis'], exam_axis['axis'][0], extend=True):
                         matched.append(candidate)
                         break
         
-        return matched if matched else candidates
+        return (matched if matched else candidates, anchor_keyword)
     
     def _apply_fallback_strategy(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -643,7 +698,7 @@ class AmbiguityResolver:
 
 # 便捷函数
 def disambiguate_entities(entities_list: List[Dict[str, Any]], 
-                         add_info: Optional[List[Tuple[float, float]]] = None) -> List[Dict[str, Any]]:
+                         add_info: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     """
     对实体列表进行歧义消解的便捷函数
     
@@ -660,7 +715,7 @@ def disambiguate_entities(entities_list: List[Dict[str, Any]],
 
 # 测试函数
 if __name__ == "__main__":
-    import json
+    
     
     # 模拟输入数据（来自output.json的格式）
     test_entities = [
@@ -680,18 +735,38 @@ if __name__ == "__main__":
             "short_sentence": "支气管通畅",
             "sentence_index": 1
         },
+
         {
-            "keyword": "肺",
+            "keyword": "肺上叶",
             "axis": [[105.0, 106.0]],
-            "partlist": [["胸部", "肺"]],
+            "partlist": [["胸部", "肺","肺上叶"]],
             "position": "肺",
-            "short_sentence": "双肺未见异常密度",
+            "short_sentence": "双肺上叶未见异常密度",
             "sentence_index": 1
         }
+
+
     ]
     
     # 模拟检查部位信息
-    add_info = [(105.0, 106.0)]  # 胸部检查
+    add_info = [{
+            "keyword": "胸部",
+            "axis": [[105.0, 106.0]],
+            "partlist": [["胸部"]],
+            "position": "胸部",
+            "short_sentence": "胸部CT平扫",
+            "sentence_index": 0
+        },
+        {
+            "keyword": "膝关节",
+            "axis": [[105.0, 106.0]],
+            "partlist": [["胸部"]],
+            "position": "胸部",
+            "short_sentence": "胸部CT平扫",
+            "sentence_index": 0
+        }
+        
+        ]  # 胸部检查
     
     # 执行消歧
     resolver = AmbiguityResolver()
@@ -703,7 +778,7 @@ if __name__ == "__main__":
     
     print("\n消歧后：")
     print(f"支气管候选数：{len(result[0]['partlist'])}")
-    print(json.dumps(result[0], indent=2, ensure_ascii=False))
+    print(json.dumps(result, indent=2, ensure_ascii=False))
     
     # 打印缓存信息
     print("\n缓存统计：")

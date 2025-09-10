@@ -684,10 +684,8 @@ def report_extrac_process(ReportTxt: Report):
     """
     studypart_analyze = text_extrac_process(ReportTxt.StudyPart, version="标题",modality=ReportTxt.modality) if ReportTxt.StudyPart else []
     result=[]
-    Conclusion_analyze = text_extrac_process(filter_paragraphs(ReportTxt.ConclusionStr), add_info=[
-        s['axis'] for s in studypart_analyze]) if ReportTxt.ConclusionStr else []
-    Report_analyze = text_extrac_process(filter_paragraphs(ReportTxt.ReportStr), add_info=[
-        s['axis'] for s in studypart_analyze]) if ReportTxt.ReportStr else []
+    Conclusion_analyze = text_extrac_process(filter_paragraphs(ReportTxt.ConclusionStr), add_info=studypart_analyze) if ReportTxt.ConclusionStr else []
+    Report_analyze = text_extrac_process(filter_paragraphs(ReportTxt.ReportStr), add_info=studypart_analyze) if ReportTxt.ReportStr else []
     if len(Report_analyze)>0:
         Report_analyze=[{**dic, 'Field': 'description'} for dic in Report_analyze]
     if len(Conclusion_analyze)>0:
@@ -702,7 +700,11 @@ def simple_example():
     # 示例1：包含强依存关系（应合并）和并列关系（应切分）的复杂长句
     long_sentence_1 = "肝门区可见肿块，压迫胆总管上段，胆囊未见增大，脂肪肝，请结合临床。双肺未见异常密度，支气管通畅。心脏增大，心腔密度减低，主动脉钙化。建议复查。胸廓入口水平见食道软组织结节。"
     long_sentence_1 = """
-L1/2-4/5椎间盘向后方突出，L5/S1椎间盘膨出，后方硬脊膜囊受压，双侧隐窝稍狭窄，相应椎管无狭窄
+颈椎生理曲度变直
+各颈椎椎体边缘及小关节突可见骨质增生
+C3/4-C6/7椎间盘膨隆，相应硬脊膜囊受压
+双侧隐窝稍狭窄，相应椎管无狭窄
+
     """
 
     startTime = time.time()
